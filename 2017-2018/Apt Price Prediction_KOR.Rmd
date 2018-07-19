@@ -1,0 +1,117 @@
+---
+title: "Apt Price Prediction_KM_Data Mining"
+author: "Seok Jun KIM"
+date: "2018년 6월 3일"
+output: html_document
+---
+
+
+```{r}
+
+library(dummies)
+library(xgboost)
+library(mice)
+library(caret)
+
+setwd("C:/Users/Kim Seok Joon/Desktop/전공/데이터마이닝/프로젝트/apt") 
+
+
+name = '김석준'
+
+df <- read.csv('apt.csv')   
+test <- read.csv('mid_X.csv')  
+
+# Preprocessing
+df=df[,-1]
+
+# Missing value rate > 5% => Delete
+sum(is.na(df)) # 220779
+nrow(df[df$asile_type=="",])/28663 *100 
+nrow(df[df$earthquake=="",])/28663 *100
+
+pMiss <- function(x){sum(is.na(x))/length(x)*100}
+apply(df, 2, pMiss)
+df=subset(df,select = -c(asile_type,building_count, building_coverage_ratio,commute_dmc, commute_seongsu
+                         ,commute_yongsan, commute_chungmuro, earthquake, floor_area_ratio, floor_max, floor_min
+                         ,parking_inside,parking_outside,parking_rate,permission_date, slope))
+
+apply(df, 1, pMiss) < 5
+df=df[apply(df, 1, pMiss) < 5,]
+
+# Dummy variable 
+df=dummy.data.frame(df)
+
+# Multiple imputation
+imp = mice(df, m=5, maxit = 50, seed=1234, method='cart')
+df=complete(imp)
+
+# XGBoost
+
+set.seed(105) # best set.seed
+intrain=createDataPartition(y=df$price, p=0.7, list=FALSE)
+train=df[intrain,]
+test=df[-intrain,]
+
+
+## Model parameters trained using xgb.cv function
+model = xgboost(data = as.matrix(subset(train, select = -c(price, heat_sourceLPG))), nfold = 5, label = as.matrix(train$price), 
+                nrounds = 2500, verbose = FALSE, objective = "reg:linear", eval_metric = "rmse", 
+                nthread = 7, eta = 0.008, gamma = 0.0475, max_depth = 16, min_child_weight = 1, 
+                subsample = 0.5213, colsample_bytree = 0.26)
+
+## Predictions
+preds2 <- predict(model, newdata = as.matrix(subset(test, select = -c(price, heat_sourceLPG)))) 
+mean(preds2)
+mean(test$price)
+
+mean(predict(model, newdata = as.matrix(subset(train,select = -c(price,heat_sourceLPG)))))
+mean(train$price)
+
+# RMSE
+RMSE(test$price, preds2) # test
+RMSE(train$price, predict(model, newdata = as.matrix(subset(train,select = -c(price,heat_sourceLPG))))) # train
+
+# R2
+R2(test$price, preds2) # test
+R2(train$price, predict(model, newdata = as.matrix(subset(train,select = -c(price,heat_sourceLPG))))) # train
+
+# View variable importance plot
+library(Ckmeans.1d.dp) #required for ggplot clustering
+mat <- xgb.importance (feature_names = colnames(train[,-41]),model)
+xgb.ggplot.importance(importance_matrix = mat[1:41], rel_to_first = TRUE) # heat_sourceLPG(Low importance) -> Delete
+
+set.seed(1024)
+
+## Preparing matrix 
+dtrain <- xgb.DMatrix(data = as.matrix(train[,-41]),label = as.matrix(train$price)) 
+dtest <- xgb.DMatrix(data = as.matrix(test[,-41]),label=as.matrix(test$price))
+
+## Parameters - To get started
+params <- list(booster = "gbtree", objective = "reg:linear", eta=0.008,gamma=0.0475, max_depth=16, min_child_weight=1, subsample=0.5213, colsample_bytree=0.26,eval_metric='rmse',nthread=7,verbose=TRUE,seed=123)
+xgbcv <- xgb.cv( params = params, data = dtrain, nrounds = 2500, stratified = T, print_every_n = 50, early_stop_rounds = 20, maximize = F, nfold = 5)
+
+### mid_X
+test=read.csv("mid_X.csv")
+test=subset(test,select = -c(asile_type,building_count, building_coverage_ratio,commute_dmc, commute_seongsu
+                             ,commute_yongsan, commute_chungmuro, earthquake, floor_area_ratio, floor_max, floor_min
+                             ,parking_inside,parking_outside,parking_rate,permission_date, slope)) 
+
+# dummy variable
+test=dummy.data.frame(test)
+str(test)
+test=cbind(test[,1:24],data.frame(heat_sourceOIL=as.integer(0)),test[,25:41]) # identical to train set variables
+
+# Multiple imputation
+imp = mice(test, m=5, maxit = 50, seed=1234, method='cart')
+test=complete(imp)
+test$heat_sourceLPG=NULL
+
+# predict
+mean(predict(model,newdata = as.matrix(test)))
+price=predict(model,newdata = as.matrix(test))
+
+# result
+write.csv(data.frame(price=price), paste0(name, '.csv'))
+
+```
+

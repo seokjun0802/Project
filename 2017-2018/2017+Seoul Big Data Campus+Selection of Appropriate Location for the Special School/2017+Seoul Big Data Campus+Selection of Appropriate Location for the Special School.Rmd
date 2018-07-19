@@ -1,0 +1,460 @@
+---
+title: "공모전코드"
+output: html_document
+---
+
+```{r}
+
+#서울시 구별 장애인 분포도
+
+setwd("C:/Users/Kim Seok Joon/Desktop/R코드")
+library("doMC")
+getDoParWorkers()
+registerDoMC(cores = 2)
+library(maptools)
+library(ggplot2)
+library(ggplot2)
+library(maptools)
+library(rgeos)
+library(ggmap)
+library(scales)
+library(RColorBrewer)
+library(dplyr)
+
+seoul_gu=read.csv("seoul_gu_map.csv")
+
+ggplot(seoul_gu, 
+       aes(x=long, y=lat, group=group)) + 
+  geom_path()
+
+seoul_gu_value <- data.frame(
+  seoul_gu %>% 
+    select(id) %>%
+    distinct,
+  value = 0)  #이 후 직접 엑셀작업을 통해 각 구의 장애인(유형구분X) 수를 입력
+
+
+###write.csv(seoul_gu_value,"seoul_gu_value.csv", row.names = F)
+seoul_gu_value=read.csv("seoul_gu_value.csv")
+
+input=seoul_gu_value[2]
+input[2]=c("도봉구","동대문구","동작구","은평구","강동구","강북구","강남구","강서구",
+           "금천구","구로구","관악구","광진구","종로구","중구","중랑구","마포구","노원구","서초구",
+           "서대문구","성북구","성동구","송파구","양천구","영등포구","용산구")
+str(input)
+
+seoul_gu_handicapped <- seoul_gu %>%
+  left_join(seoul_gu_value)
+
+seoul_gu_handicapped=input %>%
+  left_join(seoul_gu_handicapped)
+
+meanxy=seoul_gu_handicapped%>%
+  group_by(id)%>%
+  summarise(mean.x=mean(long), mean.y=mean(lat))
+
+seoul_gu_handicapped=merge(seoul_gu_handicapped, meanxy)
+
+colnames(seoul_gu_handicapped)[3]="자치구"
+colnames(seoul_gu_handicapped)[2]="장애인수"
+
+
+windows()
+ggplot(seoul_gu_handicapped, aes(x=long, y=lat, group=group)) + 
+  geom_polygon(aes(fill = 장애인수),color="black") +
+  coord_map()+
+  scale_fill_gradient(name="장애인수", low="#FFFFF0", high="#32CD32")+
+  theme_nothing(legend = TRUE)+
+  labs(title="서울시 장애인 인구 분포도")+
+  geom_text(data=seoul_gu_handicapped,
+            x=seoul_gu_handicapped$mean.x,y=seoul_gu_handicapped$mean.y,
+            label=paste(seoul_gu_handicapped$자치구),size=10,aes("bold"))+
+  theme(plot.title =  element_text(size=40, face="bold"))
+
+head(seoul_gu_handicapped)
+
+############################
+##특수학교 대상자수 구하기##
+############################
+library(dplyr)
+library(reshape2)
+library(tidyr)
+
+#연령별 장애인수 데이터 정제
+a1=read.csv("서울시 장애인 연령별 등록 현황.csv")
+head(a1)
+long <- gather(a1, type, 장애인수, 3:17)
+head(long)
+long <- long%>%filter(! 구분=="서울시")
+head(long)
+a <- dcast(long, type+구분~ 성별)
+a <- a%>%mutate(sum=rowSums(a[3:4] ))%>%select(type,구분,sum) 
+head(a) #여기서 sum은 장애인 수 를 의미함
+
+
+
+#구별 장애인수 데이터 정제
+a2=read.csv("서울시 장애인 자치구별 등록 현황.csv")
+long1 <- gather(a2,type,장애인수,2:16)
+head(long1)
+
+long1 <- long1%>%group_by(type)%>% mutate(장애유형별총합 =sum(장애인수))%>%mutate(rate=장애인수/장애유형별총합) 
+head(long1)
+#장애유형별 총합은 유형별 장애인수 총합을 의미함
+#rate는 각 구에 속한 장애인수를 유형별 장애인수 총합으로 나눈것
+
+#연령별/구별 데이터 합치기
+df<-merge(x=a,y=long1,by="type",all=TRUE)
+head(df)
+
+#구별 연령별 장애유형별 장애인 수
+df1 <- df%>%mutate(rate_final=sum*rate)
+head(df1) #rate_final이 의미하는 것? 장애 유형, 연령을 구에 속한 비율로 구해서 특정 연령의 장애인이 구에 얼만큼 속하는지 보여주는 것
+          # 추정비례치
+#4개범주
+a <- read.csv("df2.csv")
+head(a)
+
+#임의의 동의 특정 유형의 장애인 비율을 이용한 20세미만 장애인 수 구하기
+a$장애인수 <- as.numeric(a$장애인수)
+d3 <- a%>%group_by(자치구,동)%>% mutate(장애유형별총합 =sum(장애인수))%>%mutate(rate=장애인수/장애유형별총합) 
+df1 <- d3%>%mutate(a1=round(X9세이하*rate,2),a2=round(X10.19세*rate,2))
+df1 <- df1%>%group_by(자치구,동,type)%>%mutate('20세미만'=sum(a1,a2))
+head(df1)
+
+#장애유형 4개범주로 묶기
+c <- df1%>%mutate(type1=ifelse(type=="시각",'시각',ifelse(type=='청각','청각',
+                                                      ifelse(type=='지체'|type=='뇌병변','지체',
+                                                             ifelse(type=='지적장애'|type=='자폐성'|type=='정신장애','지적','기타')))))
+c <- select(c,자치구,동,type1,'20세미만')
+
+c <- c%>%filter(!type1=='기타')
+unique(c$type1)
+
+head(c)
+
+##특수학교 대상자 장애인 분포도
+
+library(dplyr)
+a <- read.csv("a1.csv")
+head(a)
+unique(a$type)
+
+c <- a%>%mutate(type1=ifelse(type=="시각",'시각',ifelse(type=='청각','청각',
+                                                    ifelse(type=='지체'|type=='뇌병변','지체',
+                                                           ifelse(type=='지적'|type=='자폐성'|type=='정신','지적','기타')))))
+
+unique(c$type)
+c <- c%>%filter(!type1=='기타')
+unique(c$type)
+
+d1 <- c%>%group_by(type1,자치구)%>%summarise(n=sum(sum))
+head(d1)
+d1$연령="19세이하"
+
+b1=d1%>%group_by(자치구)%>%summarise(장애인수=sum(n))
+
+#특수학교 대상자 맵핑
+df1=read.csv("gu_map.csv")
+seoul_gu=read.csv("seoul_gu_map.csv")
+
+
+seoul_gu_df_value <- data.frame(
+  seoul_gu %>% 
+    select(id) %>%
+    distinct,
+  value = c(528.33,503.27,536.76,860.14,781.97,574.90,738.92,976.36,
+            361.21,633.92,685.57,444.95,226.69,196.54,663.06,474.74,1085.00,444.90,
+            429.10,616.48,393.19,924.33,621.31,501.97,293.36)) 
+
+input=seoul_gu_df_value[2]
+input[2]=c("도봉구","동대문구","동작구","은평구","강동구","강북구","강남구","강서구",
+           "금천구","구로구","관악구","광진구","종로구","중구","중랑구","마포구","노원구","서초구",
+           "서대문구","성북구","성동구","송파구","양천구","영등포구","용산구")
+
+colnames(input)[2]="자치구"
+
+seoul_gu_handicapped <- df1 %>%
+  left_join(seoul_gu_df_value)
+
+seoul_gu_handicapped=input %>%
+  left_join(seoul_gu_handicapped)
+
+meanxy=seoul_gu_handicapped%>%
+  group_by(id)%>%
+  summarise(mean.x=mean(long), mean.y=mean(lat))
+
+
+seoul_gu_handicapped=merge(seoul_gu_handicapped, meanxy)
+
+colnames(seoul_gu_handicapped)[3]="자치구"
+colnames(seoul_gu_handicapped)[2]="장애인수"
+head(seoul_gu_handicapped)
+
+windows()
+ggplot(seoul_gu_handicapped, aes(x=long, y=lat, group=group)) + 
+  geom_polygon(aes(fill = 장애인수),color="black") +
+  coord_map()+
+  scale_fill_gradient(name="장애인수", low="#FFFFF0", high="#32CD32")+
+  theme_nothing(legend = TRUE)+
+  labs(title="서울시 특수학교 대상자 장애인 분포도")+
+  geom_text(data=seoul_gu_handicapped,
+            x=seoul_gu_handicapped$mean.x, y=seoul_gu_handicapped$mean.y,
+            label=seoul_gu_handicapped$자치구,size=10,aes("bold"))+
+  theme(plot.title =  element_text(size=40, face="bold"))
+
+#서울시 19세 이하 장애유형 파이차트
+library(dplyr)
+library(ggplot2)
+library(plotly)
+c <- read.csv("c.csv")
+summary(c$X20세미만)
+d <- c%>%group_by(type1)%>%summarise(sum_type1=sum(X20세미만))
+d1 <- sum(d$sum_type1)
+d <- d%>%group_by(type1)%>%mutate(rate=sum_type1/d1)
+head(d)
+#colors <- c("#89ab82","#ff466e","#ff7050","#d5a622")
+#colors <- c("#5d639d","#3b3e5d","#73703c","#cec955")
+colors <- c("#b83935","#3f2d54","#647d2e","#bf7322")
+
+plot_ly(d, labels = ~type1, values = ~sum_type1, type = 'pie',textposition = 'inside',textinfo = 'label+percent',insidetextfont=list(color = '#FFFFFF',size=40,face="bold"),
+        marker=list(colors=colors, line= list(color = '#FFFFFF', width = 1))) %>%
+  layout(title = '서울시 19세 이하 장애유형 분포도',showlegend=TRUE,
+         xaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+         yaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE))
+
+#25개구 장애유형 비율
+library(ggplot2)
+library(dplyr)
+a <- read.csv("a1.csv")
+head(a)
+unique(a$type)
+c <- a%>%mutate(type1=ifelse(type=="시각",'시각',ifelse(type=='청각','청각',
+                                                    ifelse(type=='지체'|type=='뇌병변','지체',
+                                                           ifelse(type=='지적'|type=='자폐성'|type=='정신','지적','기타')))))
+
+unique(c$type)
+c <- c%>%filter(!type1=='기타')
+unique(c$type)
+d1 <- c%>%group_by(type1,자치구)%>%summarise(n=sum(sum))
+head(d1)
+d <- d1%>%group_by(자치구)%>%mutate(sum1=sum(n))%>%mutate(rate=n/sum1)
+head(d)
+d%>%group_by(자치구)%>%summarise(rate1=sum(rate))
+
+ggplot(d, aes(x =reorder(type1,+rate),y=rate, fill =rate)) +
+  facet_wrap(~자치구) +  geom_bar( stat = "identity")+coord_flip()+
+  xlab("자치구")+ylab("장애인비율")+
+  scale_fill_gradient(low="yellow",high="red")+
+  theme_minimal()+theme_bw()+
+  geom_text(aes(label=paste(round(rate,4)*100,'%',sep='')), vjust=-0.3, size=3)+
+  theme(strip.text=element_text(face='bold',size=rel(2),color='black'), 
+        strip.background = element_rect(fill="pink"),
+        axis.text=element_text(size=rel(1),color='black'),axis.title = element_text(face='bold',size=rel(2),color='black'))
+
+#서울시 특수학교 
+
+library(leaflet)
+library(ggmap)
+library(ggplot2)
+library(dplyr)
+a<- read.csv("특수위경도.csv")
+unique(a$실제유형)
+getColor <- function(a) {
+  sapply(a$실제유형, function(실제유형) {
+    if(실제유형 == '지적') {
+      "red"
+    } else if(실제유형 =='지체,지적') {
+      "blue"
+    } else if (실제유형=='청각,지적'){
+      "darkblue"
+    }   else if(실제유형 =='시각') {
+      "gray"
+    }   else if(실제유형 =='청각') {
+      "green"
+    }   else if(실제유형 =='지체') {
+      "orange"
+    }  
+    else {
+      "black"
+    }})}
+
+icons <- awesomeIcons(
+  icon = 'ios-close',
+  library = 'ion',
+  markerColor = getColor(a[1:34,])
+)
+b <- geocode('seoul',source='google')
+
+
+leaflet(a) %>% addTiles() %>%setView(b[1],b[2],zoom=11)%>%
+  addAwesomeMarkers(~long, ~lat, icon=~icons,labelOptions = labelOptions(noHide = T,direction = "botton"))
+
+#지적장애
+
+library(leaflet)
+library(ggmap)
+library(ggplot2)
+library(dplyr)
+a<- read.csv("지적장애인1.csv")
+getColor <- function(a) {
+  sapply(a$실제유형, function(실제유형) {
+    if(실제유형 == '지적') {
+      "red"
+    } else if(실제유형 =='지체,지적') {
+      "red"
+    } else if (실제유형=='청각,지적'){
+      "red"
+    }    else {
+      "black"
+    }})}
+
+icons <- awesomeIcons(
+  icon = 'ios-close',
+  library = 'ion',
+  markerColor = getColor(a[1:21,])
+)
+b <- geocode('seoul',source='google')
+
+
+leaflet(a) %>% addTiles() %>%setView(b[1],b[2],zoom=11)%>%
+  addAwesomeMarkers(~long, ~lat, icon=~icons,labelOptions = labelOptions(noHide = T,direction = "botton"))
+
+
+#지체장애
+c<- read.csv("지체장애인.csv")
+getColor <- function(c) {
+  sapply(c$실제유형, function(실제유형) {
+    if(실제유형 == '지체') {
+      "orange"
+    } else if(실제유형 =='지체,지적') {
+      "orange"
+    }    else {
+      "black"
+    }})}
+
+icons <- awesomeIcons(
+  icon = 'ios-close',
+  library = 'ion',
+  markerColor = getColor(c[1:8,])
+)
+b <- geocode('seoul',source='google')
+
+
+leaflet(c) %>% addTiles() %>%setView(b[1],b[2],zoom=11)%>%
+  addAwesomeMarkers(~long, ~lat, icon=~icons,labelOptions = labelOptions(noHide = T,direction = "botton"))
+
+#시각장애
+
+d<- read.csv("시각장애인.csv")
+getColor <- function(d) {
+  sapply(d$실제유형, function(실제유형) {
+    if(실제유형 == '시각') {
+      "gray"
+    }    else {
+      "black"
+    }})}
+
+icons <- awesomeIcons(
+  icon = 'ios-close',
+  library = 'ion',
+  markerColor = getColor(d[1:3,])
+)
+b <- geocode('seoul',source='google')
+
+
+leaflet(d) %>% addTiles() %>%setView(b[1],b[2],zoom=11)%>%
+  addAwesomeMarkers(~long, ~lat, icon=~icons,labelOptions = labelOptions(noHide = T,direction = "botton"))
+
+#청각장애
+e<- read.csv("청각장애인.csv")
+getColor <- function(e) {
+  sapply(e$실제유형, function(실제유형) {
+    if(실제유형 == '청각') {
+      "green"
+    } else if (실제유형=='청각,지적'){
+      "green"
+    }    else {
+      "black"
+    }})}
+
+icons <- awesomeIcons(
+  icon = 'ios-close',
+  library = 'ion',
+  markerColor = getColor(e[1:4,])
+)
+b <- geocode('seoul',source='google')
+
+
+leaflet(e) %>% addTiles() %>%setView(b[1],b[2],zoom=11)%>%
+  addAwesomeMarkers(~long, ~lat, icon=~icons,labelOptions = labelOptions(noHide = T,direction = "botton"))
+
+##############
+###가중평균###
+##############
+
+# 강서구 지체특수학교 최적위치 선정(가중평균 사용)
+
+library(dplyr)
+library(ggplot2)
+library(ggmap)
+library(leaflet)
+
+a <- read.csv("c.csv")
+
+a1 <- a%>%filter(type1=='지체'&자치구=='강서구')
+k <- sum(a1$X20세미만)
+k
+a1 <- a%>%filter(type1=='지체'&자치구=='강서구')%>%mutate(weight=round(X20세미만/k,4))
+
+a2 <- read.csv("동위경도.csv")
+a3 <- merge(a1,a2,by='동')
+head(a3)
+a4 <- a3%>%mutate(x1=weight*x,y1=weight*y)
+a4%>%summarise(meanx=sum(x1),meany=sum(y1))
+
+# 이 좌표가 강서구 내에 최적의 특수학교 위치를 표현함
+
+# 맵핑
+
+b <- geocode('seoul',source='google')
+icons1 <- awesomeIcons(
+  icon = 'ios-close',
+  iconColor = 'white',
+  library = 'ion',
+  markerColor = 'orange'
+)
+
+leaflet(a) %>% addTiles() %>%setView(b[1],b[2],zoom=11)%>%
+  addAwesomeMarkers(126.8423, ~37.55671, icon=icons1,label=~'강서구 지체',labelOptions = labelOptions(noHide = T,direction = "botton"))
+
+  
+# 중랑구 지적특수학교 최적위치 선정(가중평균 사용)
+  
+a <- read.csv("c.csv")
+
+a1 <- a%>%filter(type1=='지적'&자치구=='중랑구')%>%mutate(weight=round(X20세미만/136.57,4))
+a2 <- read.csv("동위경도.csv")
+a3 <- merge(a1,a2,by='동')
+a4 <- a3%>%mutate(x1=weight*x,y1=weight*y)
+a4%>%summarise(meanx=sum(x1),meany=sum(y1))
+
+
+  
+# 맵핑 
+
+icons <- awesomeIcons(
+  icon = 'ios-close',
+  iconColor = 'white',
+  library = 'ion',
+  markerColor = 'red'
+)
+
+b <- geocode('seoul',source='google')
+leaflet(a) %>% addTiles() %>%setView(b[1],b[2],zoom=11)%>%
+  addAwesomeMarkers(~127.0748, ~37.59296, icon=icons,
+                    label=~'중랑구 지적',labelOptions = labelOptions(noHide = T,direction = "botton"))
+
+
+```
+
